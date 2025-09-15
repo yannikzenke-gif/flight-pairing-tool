@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flight Pairing Finder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      display: flex; height: 100vh;
+    }
+    #sidebar {
+      width: 300px; background: #f4f4f4;
+      padding: 15px; overflow-y: auto;
+      border-right: 1px solid #ccc;
+    }
+    #main {
+      flex: 1; padding: 15px; overflow-x: auto;
+    }
+    h2 { margin-top: 0; }
+    .filter-group { margin-bottom: 15px; }
+    table {
+      border-collapse: collapse; width: 100%;
+    }
+    th, td {
+      border: 1px solid #ddd; padding: 8px; text-align: left;
+    }
+    th {
+      cursor: pointer;
+      background-color: #f2f2f2;
+      user-select: none;
+    }
+    th.sorted-asc::after { content: " ▲"; }
+    th.sorted-desc::after { content: " ▼"; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Filters</h2>
+    <div class="filter-group">
+      <label>Upload CSV:</label>
+      <input type="file" id="csvFile" accept=".csv" />
+    </div>
+    <div class="filter-group">
+      <label>Specific Departure Date:</label>
+      <input type="date" id="departureDate" />
+    </div>
+    <div class="filter-group">
+      <label>Specific Arrival Date:</label>
+      <input type="date" id="arrivalDate" />
+    </div>
+    <div class="filter-group">
+      <label>Preferred Departure Weekday:</label>
+      <select id="depWeekday">
+        <option value="">Any</option>
+        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+        <option>Thursday</option><option>Friday</option>
+        <option>Saturday</option><option>Sunday</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Preferred Arrival Weekday:</label>
+      <select id="arrWeekday">
+        <option value="">Any</option>
+        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+        <option>Thursday</option><option>Friday</option>
+        <option>Saturday</option><option>Sunday</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Preferred Weekdays (all days):</label>
+      <input type="text" id="allWeekdays" placeholder="e.g. Mon,Fri" />
+    </div>
+    <div class="filter-group">
+      <label>Min Duration (hrs):</label>
+      <input type="number" step="0.1" id="minDuration" />
+    </div>
+    <div class="filter-group">
+      <label>Max Duration (hrs):</label>
+      <input type="number" step="0.1" id="maxDuration" />
+    </div>
+    <div class="filter-group">
+      <label>Earliest Departure Time:</label>
+      <input type="time" id="earliestDeparture" />
+    </div>
+    <div class="filter-group">
+      <label>Earliest Arrival Time:</label>
+      <input type="time" id="earliestArrival" />
+    </div>
+    <div class="filter-group">
+      <label>Max Roundtrips:</label>
+      <input type="number" id="maxRoundtrips" />
+    </div>
+    <div class="filter-group">
+      <label>Max Flights/Day:</label>
+      <input type="number" step="0.1" id="maxFlightsPerDay" />
+    </div>
+    <div class="filter-group">
+      <label>Min Block Hours/Day:</label>
+      <input type="number" step="0.1" id="minBlockHoursPerDay" />
+    </div>
+    <button onclick="applyFilters()">Apply Filters</button>
+  </div>
+
+  <div id="main">
+    <h2>Results</h2>
+    <div id="tableContainer">Upload a CSV to begin.</div>
+  </div>
+
+<script>
+let flightData = [];
+let currentSort = { column: null, asc: true };
+
+// Parse CSV when uploaded
+document.getElementById("csvFile").addEventListener("change", function(e) {
+  let file = e.target.files[0];
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      flightData = preprocess(results.data);
+      renderTable(flightData);
+    }
+  });
+});
+
+// Preprocess data
+function preprocess(data) {
+  return data.map(row => {
+    let dep = new Date(row["Departure"]);
+    let arr = new Date(row["Arrival"]);
+    let block = parseBlockHours(row["Block hours"]);
+    let durationDays = parseInt(row["Duration"]) || Math.ceil((arr - dep)/(1000*60*60*24)) + 1;
+    let blockPerDay = block ? block/ durationDays : 0;
+    let roundtrips = countRoundtrips(row["Pairing details"]);
+    let actualFlightsPerDay = row["Pairing details"] ? (row["Pairing details"].split("-").length) / durationDays : 0;
+
+    return {
+      ...row,
+      Departure: dep,
+      Arrival: arr,
+      "Block hours": block,
+      "Pairing Duration Days": durationDays,
+      "Block Hours per Pairing Day": blockPerDay,
+      Roundtrips: roundtrips,
+      "Actual Flights per Day": actualFlightsPerDay,
+      "Departure Day": dep.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
+      "Arrival Day": arr.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
+      "Boosted Hours": 0
+    };
+  });
+}
+
+function parseBlockHours(str) {
+  if(!str) return null;
+  let parts = str.split(":");
+  if(parts.length>=2) {
+    return parseInt(parts[0]) + parseInt(parts[1])/60;
+  }
+  return parseFloat(str);
+}
+
+function countRoundtrips(details) {
+  if(!details) return 0;
+  let airports = details.split("-");
+  let home = "PTY";
+  let count=0, foundFirst=false;
+  for(let a of airports){
+    if(a.trim()===home){
+      if(foundFirst) count++;
+      else foundFirst=true;
+    }
+  }
+  return count;
+}
+
+// Apply filters
+function applyFilters() {
+  let prefs = {
+    depDate: document.getElementById("departureDate").value,
+    arrDate: document.getElementById("arrivalDate").value,
+    depWeekday: document.getElementById("depWeekday").value.toLowerCase(),
+    arrWeekday: document.getElementById("arrWeekday").value.toLowerCase(),
+    allWeekdays: document.getElementById("allWeekdays").value.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean),
+    minDuration: parseFloat(document.getElementById("minDuration").value) || null,
+    maxDuration: parseFloat(document.getElementById("maxDuration").value) || null,
+    earliestDep: document.getElementById("earliestDeparture").value,
+    earliestArr: document.getElementById("earliestArrival").value,
+    maxRoundtrips: parseInt(document.getElementById("maxRoundtrips").value) || null,
+    maxFlightsPerDay: parseFloat(document.getElementById("maxFlightsPerDay").value) || null,
+    minBlockHoursPerDay: parseFloat(document.getElementById("minBlockHoursPerDay").value) || null
+  };
+
+  let filtered = flightData.filter(row => {
+    if(prefs.depDate && row.Departure.toISOString().split("T")[0] !== prefs.depDate) return false;
+    if(prefs.arrDate && row.Arrival.toISOString().split("T")[0] !== prefs.arrDate) return false;
+    if(prefs.depWeekday && row["Departure Day"]!==prefs.depWeekday) return false;
+    if(prefs.arrWeekday && row["Arrival Day"]!==prefs.arrWeekday) return false;
+    if(prefs.allWeekdays.length>0) {
+      let cur=new Date(row.Departure);
+      while(cur<=row.Arrival){
+        if(!prefs.allWeekdays.includes(cur.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase())) return false;
+        cur.setDate(cur.getDate()+1);
+      }
+    }
+    if(prefs.minDuration && row["Block hours"]<prefs.minDuration) return false;
+    if(prefs.maxDuration && row["Block hours"]>prefs.maxDuration) return false;
+    if(prefs.earliestDep){
+      let t=row.Departure.getHours()*60+row.Departure.getMinutes();
+      let limit=parseInt(prefs.earliestDep.split(":")[0])*60+parseInt(prefs.earliestDep.split(":")[1]);
+      if(t<limit) return false;
+    }
+    if(prefs.earliestArr){
+      let t=row.Arrival.getHours()*60+row.Arrival.getMinutes();
+      let limit=parseInt(prefs.earliestArr.split(":")[0])*60+parseInt(prefs.earliestArr.split(":")[1]);
+      if(t<limit) return false;
+    }
+    if(prefs.maxRoundtrips && row.Roundtrips>prefs.maxRoundtrips) return false;
+    if(prefs.maxFlightsPerDay && row["Actual Flights per Day"]>prefs.maxFlightsPerDay) return false;
+    if(prefs.minBlockHoursPerDay && row["Block Hours per Pairing Day"]<prefs.minBlockHoursPerDay) return false;
+    return true;
+  });
+
+  renderTable(filtered);
+}
+
+// Render results table with sortable headers
+function renderTable(data) {
+  if(!data || data.length===0) {
+    document.getElementById("tableContainer").innerHTML = "No matching flights.";
+    return;
+  }
+  let cols = ["Pairing","Departure","Arrival","Block hours","Pairing details","Boosted Hours","Block Hours per Pairing Day","Roundtrips","Actual Flights per Day"];
+  let html="<table><thead><tr>";
+  cols.forEach(c=>{
+    let cls="";
+    if(currentSort.column===c) cls=currentSort.asc?"sorted-asc":"sorted-desc";
+    html+=`<th class="${cls}" onclick="sortBy('${c}')">${c}</th>`;
+  });
+  html+="</tr></thead><tbody>";
+  data.forEach(r=>{
+    html+="<tr>";
+    cols.forEach(c=>{
+      let val=r[c];
+      if(val instanceof Date) val=val.toLocaleString();
+      if(typeof val==="number") val=val.toFixed(2);
+      html+=`<td>${val||""}</td>`;
+    });
+    html+="</tr>";
+  });
+  html+="</tbody></table>";
+  document.getElementById("tableContainer").innerHTML=html;
+}
+
+// Sort by column
+function sortBy(column) {
+  if(currentSort.column===column){
+    currentSort.asc=!currentSort.asc;
+  } else {
+    currentSort.column=column;
+    currentSort.asc=true;
+  }
+
+  let data=[...flightData];
+  if(currentSort.column){
+    data.sort((a,b)=>{
+      let va=a[column], vb=b[column];
+      if(va instanceof Date){ va=va.getTime(); vb=vb.getTime(); }
+      return currentSort.asc ? va-vb : vb-va;
+    });
+  }
+  renderTable(data);
+}
+</script>
+</body>
+</html>
