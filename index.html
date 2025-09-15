@@ -30,7 +30,10 @@
     th {
       cursor: pointer;
       background-color: #f2f2f2;
+      user-select: none;
     }
+    th.sorted-asc::after { content: " ▲"; }
+    th.sorted-desc::after { content: " ▼"; }
   </style>
 </head>
 <body>
@@ -98,20 +101,6 @@
       <label>Min Block Hours/Day:</label>
       <input type="number" step="0.1" id="minBlockHoursPerDay" />
     </div>
-    <div class="filter-group">
-      <label>Sort by:</label>
-      <select id="sortColumn">
-        <option value="">Default</option>
-        <option value="Departure">Departure</option>
-        <option value="Arrival">Arrival</option>
-        <option value="Block hours">Block hours</option>
-        <option value="Boosted Hours">Boosted Hours</option>
-        <option value="Block Hours per Pairing Day">Block Hours per Pairing Day</option>
-        <option value="Roundtrips">Roundtrips</option>
-        <option value="Actual Flights per Day">Actual Flights per Day</option>
-      </select>
-      <label><input type="checkbox" id="sortAsc" /> Ascending</label>
-    </div>
     <button onclick="applyFilters()">Apply Filters</button>
   </div>
 
@@ -122,6 +111,7 @@
 
 <script>
 let flightData = [];
+let currentSort = { column: null, asc: true };
 
 // Parse CSV when uploaded
 document.getElementById("csvFile").addEventListener("change", function(e) {
@@ -136,7 +126,7 @@ document.getElementById("csvFile").addEventListener("change", function(e) {
   });
 });
 
-// Preprocess data: convert dates, times, and calculate fields
+// Preprocess data
 function preprocess(data) {
   return data.map(row => {
     let dep = new Date(row["Departure"]);
@@ -158,7 +148,7 @@ function preprocess(data) {
       "Actual Flights per Day": actualFlightsPerDay,
       "Departure Day": dep.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
       "Arrival Day": arr.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
-      "Boosted Hours": 0 // simplified; could add holiday/weekend logic
+      "Boosted Hours": 0
     };
   });
 }
@@ -200,9 +190,7 @@ function applyFilters() {
     earliestArr: document.getElementById("earliestArrival").value,
     maxRoundtrips: parseInt(document.getElementById("maxRoundtrips").value) || null,
     maxFlightsPerDay: parseFloat(document.getElementById("maxFlightsPerDay").value) || null,
-    minBlockHoursPerDay: parseFloat(document.getElementById("minBlockHoursPerDay").value) || null,
-    sortColumn: document.getElementById("sortColumn").value,
-    sortAsc: document.getElementById("sortAsc").checked
+    minBlockHoursPerDay: parseFloat(document.getElementById("minBlockHoursPerDay").value) || null
   };
 
   let filtered = flightData.filter(row => {
@@ -235,19 +223,10 @@ function applyFilters() {
     return true;
   });
 
-  // sorting
-  if(prefs.sortColumn){
-    filtered.sort((a,b)=>{
-      let va=a[prefs.sortColumn], vb=b[prefs.sortColumn];
-      if(va instanceof Date) { va=va.getTime(); vb=vb.getTime(); }
-      return prefs.sortAsc ? va-vb : vb-va;
-    });
-  }
-
   renderTable(filtered);
 }
 
-// Render results table
+// Render results table with sortable headers
 function renderTable(data) {
   if(!data || data.length===0) {
     document.getElementById("tableContainer").innerHTML = "No matching flights.";
@@ -255,7 +234,11 @@ function renderTable(data) {
   }
   let cols = ["Pairing","Departure","Arrival","Block hours","Pairing details","Boosted Hours","Block Hours per Pairing Day","Roundtrips","Actual Flights per Day"];
   let html="<table><thead><tr>";
-  cols.forEach(c=>html+=`<th>${c}</th>`);
+  cols.forEach(c=>{
+    let cls="";
+    if(currentSort.column===c) cls=currentSort.asc?"sorted-asc":"sorted-desc";
+    html+=`<th class="${cls}" onclick="sortBy('${c}')">${c}</th>`;
+  });
   html+="</tr></thead><tbody>";
   data.forEach(r=>{
     html+="<tr>";
@@ -269,6 +252,26 @@ function renderTable(data) {
   });
   html+="</tbody></table>";
   document.getElementById("tableContainer").innerHTML=html;
+}
+
+// Sort by column
+function sortBy(column) {
+  if(currentSort.column===column){
+    currentSort.asc=!currentSort.asc;
+  } else {
+    currentSort.column=column;
+    currentSort.asc=true;
+  }
+
+  let data=[...flightData];
+  if(currentSort.column){
+    data.sort((a,b)=>{
+      let va=a[column], vb=b[column];
+      if(va instanceof Date){ va=va.getTime(); vb=vb.getTime(); }
+      return currentSort.asc ? va-vb : vb-va;
+    });
+  }
+  renderTable(data);
 }
 </script>
 </body>
