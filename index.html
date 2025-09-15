@@ -4,275 +4,461 @@
   <meta charset="UTF-8" />
   <title>Flight Pairing Finder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 0; padding: 0;
-      display: flex; height: 100vh;
+      font-family: 'Inter', sans-serif;
     }
-    #sidebar {
-      width: 300px; background: #f4f4f4;
-      padding: 15px; overflow-y: auto;
-      border-right: 1px solid #ccc;
+    .main-grid {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100vh;
     }
-    #main {
-      flex: 1; padding: 15px; overflow-x: auto;
+    .table-container {
+      overflow-x: auto;
+      flex-grow: 1;
     }
-    h2 { margin-top: 0; }
-    .filter-group { margin-bottom: 15px; }
-    table {
-      border-collapse: collapse; width: 100%;
+    .sticky-header th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background-color: #f3f4f6;
     }
-    th, td {
-      border: 1px solid #ddd; padding: 8px; text-align: left;
-    }
-    th {
-      cursor: pointer;
-      background-color: #f2f2f2;
-      user-select: none;
-    }
-    th.sorted-asc::after { content: " ▲"; }
-    th.sorted-desc::after { content: " ▼"; }
-  </style>
-</head>
-<body>
-  <div id="sidebar">
-    <h2>Filters</h2>
-    <div class="filter-group">
-      <label>Upload CSV:</label>
-      <input type="file" id="csvFile" accept=".csv" />
-    </div>
-    <div class="filter-group">
-      <label>Specific Departure Date:</label>
-      <input type="date" id="departureDate" />
-    </div>
-    <div class="filter-group">
-      <label>Specific Arrival Date:</label>
-      <input type="date" id="arrivalDate" />
-    </div>
-    <div class="filter-group">
-      <label>Preferred Departure Weekday:</label>
-      <select id="depWeekday">
-        <option value="">Any</option>
-        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-        <option>Thursday</option><option>Friday</option>
-        <option>Saturday</option><option>Sunday</option>
-      </select>
-    </div>
-    <div class="filter-group">
-      <label>Preferred Arrival Weekday:</label>
-      <select id="arrWeekday">
-        <option value="">Any</option>
-        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-        <option>Thursday</option><option>Friday</option>
-        <option>Saturday</option><option>Sunday</option>
-      </select>
-    </div>
-    <div class="filter-group">
-      <label>Preferred Weekdays (all days):</label>
-      <input type="text" id="allWeekdays" placeholder="e.g. Mon,Fri" />
-    </div>
-    <div class="filter-group">
-      <label>Min Duration (hrs):</label>
-      <input type="number" step="0.1" id="minDuration" />
-    </div>
-    <div class="filter-group">
-      <label>Max Duration (hrs):</label>
-      <input type="number" step="0.1" id="maxDuration" />
-    </div>
-    <div class="filter-group">
-      <label>Earliest Departure Time:</label>
-      <input type="time" id="earliestDeparture" />
-    </div>
-    <div class="filter-group">
-      <label>Earliest Arrival Time:</label>
-      <input type="time" id="earliestArrival" />
-    </div>
-    <div class="filter-group">
-      <label>Max Roundtrips:</label>
-      <input type="number" id="maxRoundtrips" />
-    </div>
-    <div class="filter-group">
-      <label>Max Flights/Day:</label>
-      <input type="number" step="0.1" id="maxFlightsPerDay" />
-    </div>
-    <div class="filter-group">
-      <label>Min Block Hours/Day:</label>
-      <input type="number" step="0.1" id="minBlockHoursPerDay" />
-    </div>
-    <button onclick="applyFilters()">Apply Filters</button>
-  </div>
-
-  <div id="main">
-    <h2>Results</h2>
-    <div id="tableContainer">Upload a CSV to begin.</div>
-  </div>
-
-<script>
-let flightData = [];
-let currentSort = { column: null, asc: true };
-
-// Parse CSV when uploaded
-document.getElementById("csvFile").addEventListener("change", function(e) {
-  let file = e.target.files[0];
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: function(results) {
-      flightData = preprocess(results.data);
-      renderTable(flightData);
-    }
-  });
-});
-
-// Preprocess data
-function preprocess(data) {
-  return data.map(row => {
-    let dep = new Date(row["Departure"]);
-    let arr = new Date(row["Arrival"]);
-    let block = parseBlockHours(row["Block hours"]);
-    let durationDays = parseInt(row["Duration"]) || Math.ceil((arr - dep)/(1000*60*60*24)) + 1;
-    let blockPerDay = block ? block/ durationDays : 0;
-    let roundtrips = countRoundtrips(row["Pairing details"]);
-    let actualFlightsPerDay = row["Pairing details"] ? (row["Pairing details"].split("-").length) / durationDays : 0;
-
-    return {
-      ...row,
-      Departure: dep,
-      Arrival: arr,
-      "Block hours": block,
-      "Pairing Duration Days": durationDays,
-      "Block Hours per Pairing Day": blockPerDay,
-      Roundtrips: roundtrips,
-      "Actual Flights per Day": actualFlightsPerDay,
-      "Departure Day": dep.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
-      "Arrival Day": arr.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase(),
-      "Boosted Hours": 0
-    };
-  });
-}
-
-function parseBlockHours(str) {
-  if(!str) return null;
-  let parts = str.split(":");
-  if(parts.length>=2) {
-    return parseInt(parts[0]) + parseInt(parts[1])/60;
-  }
-  return parseFloat(str);
-}
-
-function countRoundtrips(details) {
-  if(!details) return 0;
-  let airports = details.split("-");
-  let home = "PTY";
-  let count=0, foundFirst=false;
-  for(let a of airports){
-    if(a.trim()===home){
-      if(foundFirst) count++;
-      else foundFirst=true;
-    }
-  }
-  return count;
-}
-
-// Apply filters
-function applyFilters() {
-  let prefs = {
-    depDate: document.getElementById("departureDate").value,
-    arrDate: document.getElementById("arrivalDate").value,
-    depWeekday: document.getElementById("depWeekday").value.toLowerCase(),
-    arrWeekday: document.getElementById("arrWeekday").value.toLowerCase(),
-    allWeekdays: document.getElementById("allWeekdays").value.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean),
-    minDuration: parseFloat(document.getElementById("minDuration").value) || null,
-    maxDuration: parseFloat(document.getElementById("maxDuration").value) || null,
-    earliestDep: document.getElementById("earliestDeparture").value,
-    earliestArr: document.getElementById("earliestArrival").value,
-    maxRoundtrips: parseInt(document.getElementById("maxRoundtrips").value) || null,
-    maxFlightsPerDay: parseFloat(document.getElementById("maxFlightsPerDay").value) || null,
-    minBlockHoursPerDay: parseFloat(document.getElementById("minBlockHoursPerDay").value) || null
-  };
-
-  let filtered = flightData.filter(row => {
-    if(prefs.depDate && row.Departure.toISOString().split("T")[0] !== prefs.depDate) return false;
-    if(prefs.arrDate && row.Arrival.toISOString().split("T")[0] !== prefs.arrDate) return false;
-    if(prefs.depWeekday && row["Departure Day"]!==prefs.depWeekday) return false;
-    if(prefs.arrWeekday && row["Arrival Day"]!==prefs.arrWeekday) return false;
-    if(prefs.allWeekdays.length>0) {
-      let cur=new Date(row.Departure);
-      while(cur<=row.Arrival){
-        if(!prefs.allWeekdays.includes(cur.toLocaleDateString('en-US',{weekday:'long'}).toLowerCase())) return false;
-        cur.setDate(cur.getDate()+1);
+    @media (max-width: 768px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        height: auto;
+      }
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #ccc;
+      }
+      .table-container {
+        padding-top: 20px;
       }
     }
-    if(prefs.minDuration && row["Block hours"]<prefs.minDuration) return false;
-    if(prefs.maxDuration && row["Block hours"]>prefs.maxDuration) return false;
-    if(prefs.earliestDep){
-      let t=row.Departure.getHours()*60+row.Departure.getMinutes();
-      let limit=parseInt(prefs.earliestDep.split(":")[0])*60+parseInt(prefs.earliestDep.split(":")[1]);
-      if(t<limit) return false;
+  </style>
+</head>
+<body class="bg-gray-100 flex flex-col md:flex-row">
+  <!-- Sidebar -->
+  <div id="sidebar" class="bg-white p-6 md:w-80 w-full overflow-y-auto shadow-md rounded-lg m-4 sidebar">
+    <h2 class="text-2xl font-bold mb-4 text-gray-800">Filters</h2>
+    
+    <div class="space-y-4">
+      <!-- Upload CSV -->
+      <div class="filter-group">
+        <label for="csvFile" class="block text-sm font-medium text-gray-700">Upload CSV:</label>
+        <input type="file" id="csvFile" accept=".csv" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100"/>
+      </div>
+
+      <!-- Home Base -->
+      <div class="filter-group">
+        <label for="homeBase" class="block text-sm font-medium text-gray-700">Home Base Airport:</label>
+        <input type="text" id="homeBase" placeholder="e.g., PTY" value="PTY" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Specific Departure Date -->
+      <div class="filter-group">
+        <label for="departureDate" class="block text-sm font-medium text-gray-700">Specific Departure Date:</label>
+        <input type="date" id="departureDate" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Specific Arrival Date -->
+      <div class="filter-group">
+        <label for="arrivalDate" class="block text-sm font-medium text-gray-700">Specific Arrival Date:</label>
+        <input type="date" id="arrivalDate" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Preferred Departure Weekday -->
+      <div class="filter-group">
+        <label for="depWeekday" class="block text-sm font-medium text-gray-700">Preferred Departure Weekday:</label>
+        <select id="depWeekday" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+          <option value="">Any</option>
+          <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+          <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+        </select>
+      </div>
+
+      <!-- Preferred Arrival Weekday -->
+      <div class="filter-group">
+        <label for="arrWeekday" class="block text-sm font-medium text-gray-700">Preferred Arrival Weekday:</label>
+        <select id="arrWeekday" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+          <option value="">Any</option>
+          <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+          <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+        </select>
+      </div>
+
+      <!-- Preferred Weekdays (all days) -->
+      <div class="filter-group">
+        <label class="block text-sm font-medium text-gray-700">Preferred Weekdays (all days):</label>
+        <div class="mt-1 grid grid-cols-2 gap-2 text-sm">
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="monday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Monday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="tuesday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Tuesday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="wednesday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Wednesday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="thursday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Thursday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="friday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Friday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="saturday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Saturday</label>
+          <label class="flex items-center"><input type="checkbox" name="weekday" value="sunday" class="rounded text-blue-600 focus:ring-blue-500 mr-1"> Sunday</label>
+        </div>
+      </div>
+
+      <!-- Min Duration (hrs) -->
+      <div class="filter-group">
+        <label for="minDuration" class="block text-sm font-medium text-gray-700">Min Duration (hrs):</label>
+        <input type="number" step="0.1" id="minDuration" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Max Duration (hrs) -->
+      <div class="filter-group">
+        <label for="maxDuration" class="block text-sm font-medium text-gray-700">Max Duration (hrs):</label>
+        <input type="number" step="0.1" id="maxDuration" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Earliest Departure Time -->
+      <div class="filter-group">
+        <label for="earliestDeparture" class="block text-sm font-medium text-gray-700">Earliest Departure Time:</label>
+        <input type="time" id="earliestDeparture" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Earliest Arrival Time -->
+      <div class="filter-group">
+        <label for="earliestArrival" class="block text-sm font-medium text-gray-700">Earliest Arrival Time:</label>
+        <input type="time" id="earliestArrival" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Max Roundtrips -->
+      <div class="filter-group">
+        <label for="maxRoundtrips" class="block text-sm font-medium text-gray-700">Max Roundtrips:</label>
+        <input type="number" id="maxRoundtrips" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Max Flights/Day -->
+      <div class="filter-group">
+        <label for="maxFlightsPerDay" class="block text-sm font-medium text-gray-700">Max Flights/Day:</label>
+        <input type="number" step="0.1" id="maxFlightsPerDay" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+
+      <!-- Min Block Hours/Day -->
+      <div class="filter-group">
+        <label for="minBlockHoursPerDay" class="block text-sm font-medium text-gray-700">Min Block Hours/Day:</label>
+        <input type="number" step="0.1" id="minBlockHoursPerDay" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+      </div>
+    </div>
+    
+    <div class="mt-6">
+      <button onclick="applyFilters()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md shadow-md transition duration-200">
+        Apply Filters
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div id="main" class="flex-1 p-6 overflow-y-auto">
+    <h2 class="text-2xl font-bold mb-4 text-gray-800">Results</h2>
+    <div id="tableContainer" class="bg-white p-4 rounded-lg shadow-md">
+      <div class="text-gray-500 text-center py-10">Upload a CSV to begin.</div>
+    </div>
+  </div>
+
+  <script>
+    let flightData = [];
+    let currentSort = { column: null, asc: true };
+    const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    // Hardcoded list of US holidays for the current year (2025) for demonstration
+    const holidayDates = new Set([
+        "2025-01-01", "2025-01-20", "2025-02-17", "2025-05-26",
+        "2025-06-19", "2025-07-04", "2025-09-01", "2025-10-13",
+        "2025-11-11", "2025-11-27", "2025-12-25"
+    ]);
+
+    // Utility function for showing a loading state
+    function showLoading(message) {
+      document.getElementById("tableContainer").innerHTML = `<div class="text-center py-10 text-gray-500">${message}</div>`;
     }
-    if(prefs.earliestArr){
-      let t=row.Arrival.getHours()*60+row.Arrival.getMinutes();
-      let limit=parseInt(prefs.earliestArr.split(":")[0])*60+parseInt(prefs.earliestArr.split(":")[1]);
-      if(t<limit) return false;
+
+    // Parse CSV when uploaded
+    document.getElementById("csvFile").addEventListener("change", function(e) {
+      let file = e.target.files[0];
+      if (!file) return;
+
+      showLoading("Processing CSV...");
+      
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          if (results.data.length === 0) {
+              showLoading("CSV file is empty.");
+              return;
+          }
+          flightData = preprocess(results.data);
+          // Apply initial filters and sort after data is loaded
+          applyFilters();
+        },
+        error: function(err) {
+            showLoading(`Error parsing CSV: ${err.message}`);
+        }
+      });
+    });
+
+    // Preprocess data to add calculated fields
+    function preprocess(data) {
+        const homeBase = document.getElementById("homeBase").value.trim().toUpperCase() || "PTY";
+        return data.map(row => {
+            let dep, arr, block, durationDays, blockPerDay, roundtrips, actualFlightsPerDay, boostedHours = 0;
+
+            // Handle dates and times
+            try {
+                dep = new Date(row["Departure"]);
+                arr = new Date(row["Arrival"]);
+            } catch (e) {
+                console.error("Invalid date format in row:", row, e);
+                dep = null;
+                arr = null;
+            }
+
+            // Parse block hours
+            block = parseBlockHours(row["Block hours"]);
+
+            // Prioritize 'Duration' from CSV if it exists and is a valid number
+            if (row["Duration"] && !isNaN(parseInt(row["Duration"]))) {
+                durationDays = parseInt(row["Duration"]);
+            } else if (dep && arr) {
+                // Fallback to calculating duration from dates if 'Duration' column is missing or invalid
+                const timeDiff = arr.getTime() - dep.getTime();
+                durationDays = Math.ceil(timeDiff / (1000 * 60 * 60 * 24)) + 1;
+            } else {
+                durationDays = 1;
+            }
+            
+            // Calculate block hours per day
+            blockPerDay = block ? block / durationDays : 0;
+            
+            // Count roundtrips using the user-specified home base
+            roundtrips = countRoundtrips(row["Pairing details"], homeBase);
+            
+            // Calculate actual flights per day
+            actualFlightsPerDay = row["Pairing details"] ? (row["Pairing details"].split("-").length) / durationDays : 0;
+
+            // Corrected calculation for Boosted Hours: absolute time on weekend/holiday
+            if (dep && arr) {
+                let currentTime = new Date(dep);
+                while (currentTime < arr) {
+                    const nextDay = new Date(currentTime);
+                    nextDay.setDate(nextDay.getDate() + 1);
+                    nextDay.setHours(0, 0, 0, 0);
+
+                    const endOfCheckPeriod = new Date(Math.min(nextDay.getTime(), arr.getTime()));
+                    
+                    const currentDay = currentTime.getDay();
+                    const currentDateStr = currentTime.toISOString().split('T')[0];
+                    const isWeekendOrHoliday = (currentDay === 0 || currentDay === 6 || holidayDates.has(currentDateStr));
+                    
+                    if (isWeekendOrHoliday) {
+                        const boostedDuration = (endOfCheckPeriod.getTime() - currentTime.getTime()) / (1000 * 60 * 60);
+                        boostedHours += boostedDuration;
+                    }
+                    currentTime = nextDay;
+                }
+            }
+
+
+            return {
+                ...row,
+                Departure: dep,
+                Arrival: arr,
+                "Block hours": block,
+                "Pairing Duration Days": durationDays,
+                "Block Hours per Pairing Day": blockPerDay,
+                Roundtrips: roundtrips,
+                "Actual Flights per Day": actualFlightsPerDay,
+                "Departure Day": dep ? daysOfWeek[dep.getDay()] : '',
+                "Arrival Day": arr ? daysOfWeek[arr.getDay()] : '',
+                "Boosted Hours": boostedHours,
+                "Aircraft": row["Aircraft"] || "N/A"
+            };
+        });
     }
-    if(prefs.maxRoundtrips && row.Roundtrips>prefs.maxRoundtrips) return false;
-    if(prefs.maxFlightsPerDay && row["Actual Flights per Day"]>prefs.maxFlightsPerDay) return false;
-    if(prefs.minBlockHoursPerDay && row["Block Hours per Pairing Day"]<prefs.minBlockHoursPerDay) return false;
-    return true;
-  });
 
-  renderTable(filtered);
-}
+    // Converts "HH:MM" format to decimal hours
+    function parseBlockHours(str) {
+      if(!str) return null;
+      if (str.includes(":")) {
+        let parts = str.split(":");
+        if (parts.length >= 2) {
+          return parseInt(parts[0]) + parseInt(parts[1]) / 60;
+        }
+      }
+      return parseFloat(str) || null;
+    }
 
-// Render results table with sortable headers
-function renderTable(data) {
-  if(!data || data.length===0) {
-    document.getElementById("tableContainer").innerHTML = "No matching flights.";
-    return;
-  }
-  let cols = ["Pairing","Departure","Arrival","Block hours","Pairing details","Boosted Hours","Block Hours per Pairing Day","Roundtrips","Actual Flights per Day"];
-  let html="<table><thead><tr>";
-  cols.forEach(c=>{
-    let cls="";
-    if(currentSort.column===c) cls=currentSort.asc?"sorted-asc":"sorted-desc";
-    html+=`<th class="${cls}" onclick="sortBy('${c}')">${c}</th>`;
-  });
-  html+="</tr></thead><tbody>";
-  data.forEach(r=>{
-    html+="<tr>";
-    cols.forEach(c=>{
-      let val=r[c];
-      if(val instanceof Date) val=val.toLocaleString();
-      if(typeof val==="number") val=val.toFixed(2);
-      html+=`<td>${val||""}</td>`;
-    });
-    html+="</tr>";
-  });
-  html+="</tbody></table>";
-  document.getElementById("tableContainer").innerHTML=html;
-}
+    // Counts roundtrips based on a pairing string and home base
+    function countRoundtrips(details, home) {
+      if(!details) return 0;
+      let airports = details.split("-").map(a => a.trim().toUpperCase());
+      let count = 0;
+      let foundFirst = false;
+      for(let a of airports){
+        if(a === home){
+          if(foundFirst) count++;
+          else foundFirst = true;
+        }
+      }
+      return count;
+    }
 
-// Sort by column
-function sortBy(column) {
-  if(currentSort.column===column){
-    currentSort.asc=!currentSort.asc;
-  } else {
-    currentSort.column=column;
-    currentSort.asc=true;
-  }
+    // Apply filters to the preprocessed data
+    function applyFilters() {
+      if (flightData.length === 0) {
+          showLoading("Please upload a CSV file first.");
+          return;
+      }
+      
+      const weekdayCheckboxes = document.querySelectorAll('input[name="weekday"]:checked');
+      const allWeekdays = Array.from(weekdayCheckboxes).map(cb => cb.value);
 
-  let data=[...flightData];
-  if(currentSort.column){
-    data.sort((a,b)=>{
-      let va=a[column], vb=b[column];
-      if(va instanceof Date){ va=va.getTime(); vb=vb.getTime(); }
-      return currentSort.asc ? va-vb : vb-va;
-    });
-  }
-  renderTable(data);
-}
-</script>
+      const prefs = {
+        depDate: document.getElementById("departureDate").value,
+        arrDate: document.getElementById("arrivalDate").value,
+        depWeekday: document.getElementById("depWeekday").value.toLowerCase(),
+        arrWeekday: document.getElementById("arrWeekday").value.toLowerCase(),
+        allWeekdays: allWeekdays,
+        minDuration: parseFloat(document.getElementById("minDuration").value) || null,
+        maxDuration: parseFloat(document.getElementById("maxDuration").value) || null,
+        earliestDep: document.getElementById("earliestDeparture").value,
+        earliestArr: document.getElementById("earliestArrival").value,
+        maxRoundtrips: parseInt(document.getElementById("maxRoundtrips").value) || null,
+        maxFlightsPerDay: parseFloat(document.getElementById("maxFlightsPerDay").value) || null,
+        minBlockHoursPerDay: parseFloat(document.getElementById("minBlockHoursPerDay").value) || null
+      };
+
+      let filtered = flightData.filter(row => {
+        // Date filters
+        if (prefs.depDate && row.Departure && row.Departure.toISOString().split("T")[0] !== prefs.depDate) return false;
+        if (prefs.arrDate && row.Arrival && row.Arrival.toISOString().split("T")[0] !== prefs.arrDate) return false;
+        
+        // Weekday filters
+        if(prefs.depWeekday && row["Departure Day"] !== prefs.depWeekday) return false;
+        if(prefs.arrWeekday && row["Arrival Day"] !== prefs.arrWeekday) return false;
+        
+        // All weekdays filter
+        if(prefs.allWeekdays.length > 0) {
+          if (!row.Departure || !row.Arrival) return false;
+          let cur = new Date(row.Departure);
+          while(cur <= row.Arrival){
+            if(!prefs.allWeekdays.includes(daysOfWeek[cur.getDay()])) return false;
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+        
+        // Duration and block hour filters
+        if(prefs.minDuration !== null && (row["Block hours"] === null || row["Block hours"] < prefs.minDuration)) return false;
+        if(prefs.maxDuration !== null && (row["Block hours"] === null || row["Block hours"] > prefs.maxDuration)) return false;
+        
+        // Time filters
+        if(prefs.earliestDep && row.Departure){
+          const t = row.Departure.getHours() * 60 + row.Departure.getMinutes();
+          const limit = parseInt(prefs.earliestDep.split(":")[0]) * 60 + parseInt(prefs.earliestDep.split(":")[1]);
+          if(t < limit) return false;
+        }
+        if(prefs.earliestArr && row.Arrival){
+          const t = row.Arrival.getHours() * 60 + row.Arrival.getMinutes();
+          const limit = parseInt(prefs.earliestArr.split(":")[0]) * 60 + parseInt(prefs.earliestArr.split(":")[1]);
+          if(t < limit) return false;
+        }
+        
+        // Other calculated field filters
+        if(prefs.maxRoundtrips !== null && row.Roundtrips > prefs.maxRoundtrips) return false;
+        if(prefs.maxFlightsPerDay !== null && row["Actual Flights per Day"] > prefs.maxFlightsPerDay) return false;
+        if(prefs.minBlockHoursPerDay !== null && row["Block Hours per Pairing Day"] < prefs.minBlockHoursPerDay) return false;
+        
+        return true;
+      });
+
+      // Now apply the current sort to the filtered data
+      if (currentSort.column) {
+        filtered.sort((a, b) => {
+          const va = a[currentSort.column];
+          const vb = b[currentSort.column];
+          
+          if (typeof va === 'string' && typeof vb === 'string') {
+            return currentSort.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+          }
+          
+          let valA = (va instanceof Date) ? va.getTime() : va;
+          let valB = (vb instanceof Date) ? vb.getTime() : vb;
+          
+          if (valA === null || valA === undefined) return currentSort.asc ? 1 : -1;
+          if (valB === null || valB === undefined) return currentSort.asc ? -1 : 1;
+
+          return currentSort.asc ? valA - valB : valB - valA;
+        });
+      }
+
+      renderTable(filtered);
+    }
+
+    // Render results table with sortable headers
+    function renderTable(data) {
+      const tableContainer = document.getElementById("tableContainer");
+      if(!data || data.length === 0) {
+        tableContainer.innerHTML = `<div class="text-center py-10 text-gray-500">No matching flights.</div>`;
+        return;
+      }
+      
+      const cols = ["Pairing", "Departure", "Arrival", "Aircraft", "Block hours", "Pairing details", "Boosted Hours", "Block Hours per Pairing Day", "Roundtrips", "Actual Flights per Day"];
+      
+      let html = `<div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-200 shadow-md rounded-lg">
+                    <thead class="bg-gray-50 sticky-header">
+                      <tr>`;
+      
+      cols.forEach(c => {
+        let cls = "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer";
+        let sortIndicator = "";
+        if (currentSort.column === c) {
+          cls += " font-bold";
+          sortIndicator = currentSort.asc ? "▲" : "▼";
+        }
+        html += `<th scope="col" class="${cls}" onclick="sortBy('${c}')">${c} <span class="text-gray-400">${sortIndicator}</span></th>`;
+      });
+      
+      html += `</tr></thead>
+               <tbody class="bg-white divide-y divide-gray-200">`;
+      
+      data.forEach(r => {
+        html += `<tr class="hover:bg-gray-50">`;
+        cols.forEach(c => {
+          let val = r[c];
+          if (val instanceof Date) {
+            val = val.toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+          } else if (typeof val === "number") {
+            val = val.toFixed(2);
+          }
+          html += `<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${val || "N/A"}</td>`;
+        });
+        html += `</tr>`;
+      });
+      
+      html += `</tbody></table></div>`;
+      tableContainer.innerHTML = html;
+    }
+
+    // Sort by column
+    function sortBy(column) {
+      if(currentSort.column === column) {
+        currentSort.asc = !currentSort.asc;
+      } else {
+        currentSort.column = column;
+        currentSort.asc = true;
+      }
+      // Re-apply filters with the new sort state
+      applyFilters();
+    }
+  </script>
 </body>
 </html>
